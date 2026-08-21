@@ -63,17 +63,23 @@ export class OIDVPService {
       "SWIYU-API-Version": "2",
     });
 
+    // The verifier echoes `state` back for request/response correlation and rejects the
+    // submission otherwise ("OAuth2.0 State mismatch") - see
+    // VerificationPresentationUnionDto.state in swiyu-verifier.
+    const withState = (body: HttpParams): HttpParams =>
+      requestObject.state ? body.set("state", requestObject.state) : body;
+
     if (requestObject.response_mode === "direct_post.jwt") {
       return from(this.encryptVerifierPayload(requestObject, vpTokenJson)).pipe(
         map((encryptedPayload: string) => ({
-          body: new HttpParams().set("response", encryptedPayload),
+          body: withState(new HttpParams().set("response", encryptedPayload)),
           headers,
         }))
       );
     }
 
     return of({
-      body: new HttpParams().set("vp_token", vpTokenJson),
+      body: withState(new HttpParams().set("vp_token", vpTokenJson)),
       headers,
     });
   }
