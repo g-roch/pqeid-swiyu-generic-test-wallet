@@ -102,6 +102,7 @@ export function generateXWingKeyPair(): XWingKeyPair {
 
 export interface XWingJwk {
   kty: "XWING";
+  alg: "XWING";
   kid?: string;
   x: string;
   d?: string;
@@ -111,6 +112,7 @@ export interface XWingJwk {
 export function exportXWingPublicJwk(pair: XWingKeyPair, kid?: string): XWingJwk {
   return {
     kty: XWING_KEY_TYPE,
+    alg: XWING_KEY_TYPE,
     ...(kid ? { kid } : {}),
     x: base64UrlEncode(pair.publicKey),
   };
