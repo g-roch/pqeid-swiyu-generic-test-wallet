@@ -11,7 +11,7 @@
  */
 
 import { exportJWK, JWK } from "jose";
-import { AKPJwk, exportMLDSAPrivateJwk, generateMLDSAKeyPair, MLDSAAlg, MLDSAKeyPair } from "./mldsa";
+import { AKPJwk, exportMLDSAPublicJwk, generateMLDSAKeyPair, MLDSAAlg, MLDSAKeyPair } from "./mldsa";
 
 export function isMLDSAAlg(alg: string | undefined): alg is MLDSAAlg {
   return alg === "ML-DSA-44" || alg === "ML-DSA-65" || alg === "ML-DSA-87";
@@ -30,7 +30,10 @@ export async function generateHolderKeyPair(alg: string): Promise<HolderKeyPair>
       alg,
       secretKey: pair.secretKey,
       publicKey: pair.publicKey,
-      jwk: exportMLDSAPrivateJwk(pair),
+      // Public-only JWK: `.jwk` gets embedded verbatim in JOSE header `jwk` claims
+      // (DPoP proofs, holder-binding/proof-of-possession JWTs, kb+jwt) sent to the
+      // issuer/verifier - it must never carry the "priv" field.
+      jwk: exportMLDSAPublicJwk(pair),
     };
   }
 

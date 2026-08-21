@@ -38,8 +38,6 @@ export class DpopService {
       payload["ath"] = await this.createAth(accessToken);
     }
 
-    console.log("dpop jwt", dpopKeys.jwk);
-
     // DPoP proof signature - `dpopKeys.alg` is ML-DSA-44 by default (see
     // vc-key-store.service.ts::generateDpopKeyPair), matching DpopJwtValidator's
     // SUPPORTED_ALGORITHMS in swiyu-generic-java-lib.
