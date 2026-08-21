@@ -1,9 +1,9 @@
 import { HttpClient, HttpHeaders, HttpParams } from "@angular/common/http";
 import { inject, Injectable } from "@angular/core";
-import { CompactEncrypt, importJWK } from "jose";
 import { from, map, Observable, of, switchMap } from "rxjs";
 import { VpTokenMap } from "@app/models/api-response";
 import { RequestObject } from "src/generated/verifier";
+import { encryptJwe } from "@app/crypto/jwe";
 
 @Injectable({
   providedIn: "root",
@@ -104,16 +104,15 @@ export class OIDVPService {
       throw new Error(`Invalid vp_token JSON format: ${(error as Error).message}`);
     }
 
-    const publicKey = await importJWK(encryptionKey, encryptionKey.alg);
-    const payload = new TextEncoder().encode(JSON.stringify({ vp_token: vpToken }));
-
-    return new CompactEncrypt(payload)
-      .setProtectedHeader({
-        alg: encryptionKey.alg,
-        enc: encryptionEnc,
-        typ: "JWT",
-        kid: encryptionKey.kid || undefined,
-      })
-      .encrypt(publicKey);
+    // JWE encryption of the verification response for the verifier's advertised key, alg
+    // taken dynamically from request_object.client_metadata (now "XWING" after the
+    // verifier's PQC migration, see ManagementService.createEncryptionKeys in
+    // swiyu-verifier) - dispatches to X-Wing (jwe.ts) or classical `jose` accordingly.
+    return encryptJwe(
+      { vp_token: vpToken },
+      encryptionKey as any,
+      encryptionKey.alg,
+      encryptionEnc,
+    );
   }
 }

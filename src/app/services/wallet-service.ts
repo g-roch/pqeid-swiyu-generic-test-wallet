@@ -16,11 +16,13 @@ import {
 import { WalletOptions } from "@app/models/wallet-options";
 import { VCRecord } from "@app/models/vc-record";
 import { VcKeyStoreService } from "./vc-key-store.service";
+import { generateHolderKeyPair, HolderKeyPair } from "@app/crypto/holder-key";
+import { signJwtWithHolderKey, verifyJwtWithJwk } from "@app/crypto/jwt";
+import { EphemeralKeyPair } from "@app/crypto/jwe";
 
 interface ProofKeyPair {
   proofIndex: number;
-  privateKey: CryptoKey;
-  jwk: jose.JWK;
+  keyPair: HolderKeyPair;
 }
 
 @Injectable({
@@ -129,15 +131,15 @@ export class WalletService {
     this.saveOptions();
   }
 
-  private ephemeralPrivateKey?: CryptoKey;
+  private ephemeralKeyPair?: EphemeralKeyPair;
   private generatedProofKeyPairs: ProofKeyPair[] = [];
 
-  setEphemeralPrivateKey(key: CryptoKey) {
-    this.ephemeralPrivateKey = key;
+  setEphemeralKeyPair(keyPair: EphemeralKeyPair) {
+    this.ephemeralKeyPair = keyPair;
   }
 
-  getEphemeralPrivateKey(): CryptoKey | undefined {
-    return this.ephemeralPrivateKey;
+  getEphemeralKeyPair(): EphemeralKeyPair | undefined {
+    return this.ephemeralKeyPair;
   }
 
   private getCredentialConfig(
@@ -203,8 +205,11 @@ export class WalletService {
           meth: Record<string, unknown> | null,
         ): meth is Record<string, unknown> => meth != null,
       )[0];
-    const jwk = verificationMethod?.["publicKeyJwk"] as CryptoKey;
-    const { payload, protectedHeader } = await jose.jwtVerify(jwt, jwk, {});
+    const jwk = verificationMethod?.["publicKeyJwk"];
+    // Verifies the issued credential's signature against the DID-registry public key -
+    // dispatches to ML-DSA (mldsa.ts) or classical `jose` based on jwk.kty, see
+    // crypto/jwt.ts::verifyJwtWithJwk.
+    const { payload, protectedHeader } = await verifyJwtWithJwk(jwt, jwk as any);
     return {
       payload: payload as JwtPayload,
       protectedHeader: protectedHeader as JwtPayload,
@@ -233,8 +238,10 @@ export class WalletService {
           meth: Record<string, unknown> | null,
         ): meth is Record<string, unknown> => meth != null,
       )[0];
-    const jwk = verificationMethod?.["publicKeyJwk"] as CryptoKey;
-    const { payload, protectedHeader } = await jose.jwtVerify(jwt, jwk, {});
+    const jwk = verificationMethod?.["publicKeyJwk"];
+    // Same alg-aware dispatch as decodeJwt above (this variant handles the list-shaped
+    // registryEntry response format).
+    const { payload, protectedHeader } = await verifyJwtWithJwk(jwt, jwk as any);
     return {
       payload: payload as JwtPayload,
       protectedHeader: protectedHeader as JwtPayload,
@@ -290,30 +297,23 @@ export class WalletService {
     this.generatedProofKeyPairs = [];
 
     for (let i = 0; i < numberOfProofs; i++) {
-      const { publicKey, privateKey } = await crypto.subtle.generateKey(
-        {
-          name: "ECDSA",
-          namedCurve: "P-256",
-        },
-        true,
-        ["sign", "verify"],
-      );
-
-      const jwk = await jose.exportJWK(publicKey);
+      // Holder-binding proof key pair, generated for whatever `proofAlg` the issuer actually
+      // advertised (ML-DSA via mldsa.ts, classical EC via WebCrypto otherwise - see
+      // crypto/holder-key.ts::generateHolderKeyPair). This key is later reused as the
+      // per-VC key-binding key in credential-issuance.ts, so its type must match what the
+      // verifier will require at presentation time too.
+      const keyPair = await generateHolderKeyPair(proofAlg);
 
       this.generatedProofKeyPairs.push({
         proofIndex: i,
-        privateKey,
-        jwk,
+        keyPair,
       });
 
       const jwt = await this.buildHolderBindingWithKey(
         Math.floor(Date.now() / 1000),
         credentialIssuer,
         nonce.c_nonce,
-        proofAlg,
-        privateKey,
-        jwk,
+        keyPair,
       );
       proofs.jwt.push(jwt);
     }
@@ -324,11 +324,17 @@ export class WalletService {
       proofs,
     };
 
-    const keyPair =
-      await this.cryptoService.generateEphemeralKeyPair("ECDH-ES");
-    this.setEphemeralPrivateKey(keyPair.privateKey);
+    // Ephemeral JWE key pair the issuer will encrypt its response with, generated for
+    // whatever alg the issuer's credential_response_encryption actually advertises (XWING
+    // via jwe.ts, classical ECDH-ES via `jose` otherwise), instead of a hardcoded "ECDH-ES".
+    const responseEncAlg =
+      metadata.credential_response_encryption?.alg_values_supported?.[0] ??
+      "ECDH-ES";
+    const ephemeralKeyPair =
+      await this.cryptoService.generateEphemeralKeyPair(responseEncAlg);
+    this.setEphemeralKeyPair(ephemeralKeyPair);
     const publicJwk = await this.cryptoService.exportPublicJwk(
-      keyPair.publicKey,
+      ephemeralKeyPair,
     );
 
     if (buildEncrypted) {
@@ -378,54 +384,33 @@ export class WalletService {
     return payload;
   }
 
+  // Note: this method does not appear to be called anywhere in src/ (buildHolderBindingWithKey
+  // below is used instead) - dead code, kept for parity with the holder-key-service fallback.
   async buildHolderBinding(
     now: number,
     audience: string,
     nonce: string,
-    alg: string,
   ): Promise<string> {
-    const claims: Record<string, unknown> = {
-      aud: audience,
-      iat: now,
-      nonce: nonce,
-    };
-
-    const jwt = await new jose.SignJWT(claims)
-      .setProtectedHeader({
-        alg: alg,
-        typ: "openid4vci-proof+jwt",
-        jwk: this.holderKeyService.getJwk(),
-      })
-      .setIssuedAt(now)
-      .setAudience(audience)
-      .setExpirationTime("2h")
-      .sign(this.holderKeyService.getPrivateKey());
-
-    return jwt;
+    return signJwtWithHolderKey(
+      this.holderKeyService.getKeyPair(),
+      { nonce },
+      { typ: "openid4vci-proof+jwt", jwk: this.holderKeyService.getJwk() },
+      { audience, expiresIn: "2h", issuedAt: now },
+    );
   }
 
   async buildHolderBindingWithKey(
     now: number,
     audience: string,
     nonce: string,
-    alg: string,
-    privateKey: CryptoKey,
-    jwk: jose.JWK,
+    keyPair: HolderKeyPair,
   ): Promise<string> {
-    const claims: Record<string, unknown> = {
-      aud: audience,
-      iat: now,
-      nonce: nonce,
-    };
-
-    const jwt = await new jose.SignJWT(claims)
-      .setProtectedHeader({ alg: alg, typ: "openid4vci-proof+jwt", jwk: jwk })
-      .setIssuedAt(now)
-      .setAudience(audience)
-      .setExpirationTime("2h")
-      .sign(privateKey);
-
-    return jwt;
+    return signJwtWithHolderKey(
+      keyPair,
+      { nonce },
+      { typ: "openid4vci-proof+jwt", jwk: keyPair.jwk },
+      { audience, expiresIn: "2h", issuedAt: now },
+    );
   }
 
   getGeneratedProofKeyPairs(): ProofKeyPair[] {
@@ -435,15 +420,15 @@ export class WalletService {
   async resolveResponseCredential(
     encryptedResponse: CredentialEndpointResponse | string,
   ) {
-    const privateKey = this.getEphemeralPrivateKey();
+    const keyPair = this.getEphemeralKeyPair();
 
-    if (!privateKey) {
-      throw new Error("Missing wallet ephemeral private key");
+    if (!keyPair) {
+      throw new Error("Missing wallet ephemeral key pair");
     }
 
     return this.cryptoService.decryptPayload(
       encryptedResponse,
-      privateKey,
+      keyPair,
     ) as CredentialEndpointResponse;
   }
 

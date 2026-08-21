@@ -111,7 +111,7 @@ export class TrustStatementVerifierService {
     trustRootDid: string,
     actorDid: string,
     vct: string,
-    publicKeys: CryptoKey[],
+    publicKeys: (CryptoKey | Uint8Array)[],
     verifiedStatusListTokens: TokenStatusListTokenDto[],
   ): Promise<TrustVerificationResult> {
     const validStatements = await this.getValidStatements(
@@ -146,7 +146,7 @@ export class TrustStatementVerifierService {
     trustRootDid: string,
     publicStatementIssuerDid: string,
     actorDid: string,
-    publicKeys: CryptoKey[],
+    publicKeys: (CryptoKey | Uint8Array)[],
     verifiedStatusListTokens: TokenStatusListTokenDto[],
   ): Promise<TrustVerificationResult> {
     const validStatements = await this.getValidStatements(
@@ -174,7 +174,7 @@ export class TrustStatementVerifierService {
     trustRootDid: string,
     publicStatementIssuerDid: string | null,
     actorDid: string,
-    publicKeys: CryptoKey[],
+    publicKeys: (CryptoKey | Uint8Array)[],
     verifiedStatusListTokens: TokenStatusListTokenDto[],
   ): Promise<Statement[]> {
     const results = await Promise.all(

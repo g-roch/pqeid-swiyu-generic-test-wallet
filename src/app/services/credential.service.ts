@@ -42,6 +42,12 @@ export class CredentialService {
       nonce
     }
 
+    // TODO-PQEID: holder-binding proof signature, alg taken dynamically from the issuer's
+    // proof_signing_alg_values_supported (now "ML-DSA-44" after the issuer's PQC migration).
+    // Algorithm-agnostic call site, but `privateKey`/`jwk` must actually be an ML-DSA key
+    // pair for this to work - `jose`'s SignJWT has no ML-DSA support, so this will throw
+    // once called with a real "ML-DSA-44" alg (see also the EC-key-only generation in
+    // vc-key-store.service.ts / wallet-service.ts).
     const jwt = await new jose.SignJWT(claims)
       .setProtectedHeader({ alg: proofSigningAlgValuesSupported, typ: 'openid4vci-proof+jwt', jwk: jwk })
       .setIssuedAt(Math.floor(Date.now() / 1000))
@@ -59,6 +65,11 @@ export class CredentialService {
       .map(meth => (meth as Record<string, unknown>)['id'] === kid ? meth : null)
       .filter((meth: Record<string, unknown> | null): meth is Record<string, unknown> => meth != null)[0];
     const jwk = verificationMethod?.['publicKeyJwk'] as CryptoKey;
+    // TODO-PQEID: signature verification against a DID-registry-resolved key - same
+    // "jose has no ML-DSA support" gap as createHolderBinding above. Note: this
+    // CredentialService class appears unused (superseded by VerificationService, which has
+    // the same methods) - not imported anywhere else in src/, kept annotated for
+    // completeness since it's still real crypto-calling code.
     const { payload, protectedHeader } = await jose.jwtVerify(jwt, jwk, {})
 
     return { payload: payload as JwtPayload, protectedHeader: protectedHeader as JwtPayload };

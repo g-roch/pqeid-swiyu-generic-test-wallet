@@ -1,21 +1,15 @@
 import { Injectable } from '@angular/core';
-import * as jose from 'jose';
+import { generateHolderKeyPair, HolderKeyPair } from '@app/crypto/holder-key';
 
 export interface VcKeyPair {
   vcId: string;
   credentialType: string;
-  publicKey: CryptoKey;
-  privateKey: CryptoKey;
-  jwk: jose.JWK;
+  keyPair: HolderKeyPair;
   createdAt: Date;
   issuerId: string;
 }
 
-export interface DpopKeyPair {
-  privateKey: CryptoKey;
-  publicKey: CryptoKey;
-  jwk: jose.JWK;
-}
+export type DpopKeyPair = HolderKeyPair;
 
 @Injectable({
   providedIn: 'root'
@@ -23,62 +17,34 @@ export interface DpopKeyPair {
 export class VcKeyStoreService {
   private vcKeyPair = new Map<string, VcKeyPair>();
 
+  /**
+   * DPoP proof key pair. Defaults to ML-DSA-44 since swiyu-generic-java-lib's
+   * DpopJwtValidator.SUPPORTED_ALGORITHMS now only accepts "ML-DSA-44" (see
+   * DpopConstants.java) - a classical key here would be rejected by the authorization
+   * server's DPoP validation regardless of what dpop-service.ts signs with.
+   */
   async generateDpopKeyPair(): Promise<DpopKeyPair> {
-    const keyPair = await crypto.subtle.generateKey(
-      {
-        name: 'ECDSA',
-        namedCurve: 'P-256',
-      },
-      true,
-      ['sign', 'verify']
-    );
-    const publicKey = keyPair.publicKey;
-    const privateKey = keyPair.privateKey;
-    const jwk = await jose.exportJWK(publicKey);
-
-    return { privateKey, publicKey, jwk };
+    return generateHolderKeyPair('ML-DSA-44');
   }
 
   async generateKeyPairForVc(
     vcId: string,
     credentialType: string,
     issuerId: string,
-    existingKeyPair?: { privateKey: CryptoKey; jwk: any }
+    existingKeyPair?: HolderKeyPair,
+    alg = 'ML-DSA-44',
   ): Promise<VcKeyPair> {
-    let publicKey: CryptoKey;
-    let privateKey: CryptoKey;
-    let jwk: any;
-
-    if (existingKeyPair) {
-      privateKey = existingKeyPair.privateKey;
-      jwk = existingKeyPair.jwk;
-      publicKey = await crypto.subtle.importKey(
-        'jwk',
-        jwk,
-        { name: 'ECDSA', namedCurve: 'P-256' },
-        true,
-        ['verify']
-      );
-    } else {
-      const keyPair = await crypto.subtle.generateKey(
-        {
-          name: 'ECDSA',
-          namedCurve: 'P-256',
-        },
-        true,
-        ['sign', 'verify']
-      );
-      publicKey = keyPair.publicKey;
-      privateKey = keyPair.privateKey;
-      jwk = await jose.exportJWK(publicKey);
-    }
+    // The per-VC holder-binding key: reused from wallet-service.ts::buildRequestCredential
+    // when available (the key that was actually committed to the credential's `cnf` claim
+    // during issuance), since the key-binding JWT at presentation time must be signed with
+    // that exact key - generating a fresh one here would no longer match `cnf`. Falls back
+    // to generating a fresh key only when no proof key pair was produced during issuance.
+    const keyPair = existingKeyPair ?? (await generateHolderKeyPair(alg));
 
     const vcKeyPair: VcKeyPair = {
       vcId,
       credentialType,
-      publicKey,
-      privateKey,
-      jwk,
+      keyPair,
       createdAt: new Date(),
       issuerId
     };
@@ -91,19 +57,8 @@ export class VcKeyStoreService {
     return this.vcKeyPair.get(vcId);
   }
 
-  getPrivateKeyByVcId(vcId: string): CryptoKey | null {
-    const keyPair = this.vcKeyPair.get(vcId);
-    return keyPair?.privateKey ?? null;
-  }
-
-  getPublicKeyByVcId(vcId: string): CryptoKey | null {
-    const keyPair = this.vcKeyPair.get(vcId);
-    return keyPair?.publicKey ?? null;
-  }
-
-  getJwkByVcId(vcId: string): jose.JWK | null {
-    const keyPair = this.vcKeyPair.get(vcId);
-    return keyPair?.jwk ?? null;
+  getHolderKeyPairByVcId(vcId: string): HolderKeyPair | null {
+    return this.vcKeyPair.get(vcId)?.keyPair ?? null;
   }
 
   getAllKeyPairs(): VcKeyPair[] {

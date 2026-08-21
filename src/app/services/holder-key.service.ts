@@ -1,48 +1,51 @@
 import { Injectable } from '@angular/core';
-import * as jose from 'jose';
 import { JWK } from 'jose';
+import { AKPJwk } from '@app/crypto/mldsa';
+import { generateHolderKeyPair, HolderKeyPair } from '@app/crypto/holder-key';
 
 @Injectable({
   providedIn: 'root'
 })
 export class HolderKeyService {
-  private privateKey: CryptoKey | null = null;
-  private publicKey: CryptoKey | null = null;
-  private jwk: JWK | null = null;
+  private keyPair: HolderKeyPair | null = null;
   private keyGeneratedAt: Date | null = null;
   private currentKeyId: string | null = null;
 
+  /**
+   * Holder's long-lived fallback key pair, used by
+   * credential-verification.ts::findCredentialKeyPair when no per-VC key was stored for the
+   * credential being presented. Defaults to ML-DSA-44 since that's the only key-binding
+   * algorithm the migrated verifier's SdJwtVpTokenVerifier now accepts (see pqeid ML-DSA/DID
+   * resolver blocker memory) - this fallback is generated once at app bootstrap (no issuer/
+   * verifier metadata known yet), so it can't follow a per-session dynamic alg the way the
+   * per-VC keys in vc-key-store.service.ts do.
+   */
   async initializeKeys(): Promise<void> {
-    const { publicKey, privateKey } = await crypto.subtle.generateKey(
-      {
-        name: 'ECDSA',
-        namedCurve: 'P-256',
-      },
-      true,
-      ['sign', 'verify']
-    );
-
-    this.privateKey = privateKey;
-    this.publicKey = publicKey;
-    this.jwk = await jose.exportJWK(publicKey);
+    this.keyPair = await generateHolderKeyPair('ML-DSA-44');
     this.keyGeneratedAt = new Date();
 
     this.currentKeyId = `key_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
+  getKeyPair(): HolderKeyPair {
+    if (this.keyPair) return this.keyPair;
+    throw new Error('getKeyPair');
+  }
+
   getPrivateKey(): CryptoKey {
-    if(this.privateKey) 
-      return this.privateKey;
-    throw new Error("getPrivateKey");
+    const keyPair = this.getKeyPair();
+    if (keyPair.kind !== 'jose') {
+      throw new Error('Holder key is not a WebCrypto key (kind=' + keyPair.kind + ')');
+    }
+    return keyPair.privateKey;
   }
 
   getPublicKey(): CryptoKey | null {
-    return this.publicKey;
+    return this.keyPair?.kind === 'jose' ? this.keyPair.publicKey : null;
   }
 
-  getJwk(): JWK {
-    if (this.jwk)
-      return this.jwk;
+  getJwk(): JWK | AKPJwk {
+    if (this.keyPair) return this.keyPair.jwk;
     throw new Error("getJwk")
   }
 
@@ -55,7 +58,7 @@ export class HolderKeyService {
   }
 
   hasKeys(): boolean {
-    return this.privateKey !== null && this.publicKey !== null;
+    return this.keyPair !== null;
   }
 }
 

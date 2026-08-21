@@ -17,6 +17,7 @@ import { MatButton } from "@angular/material/button";
 import { Router } from "@angular/router";
 import { JwtPayload, RegistryEntry } from "@app/models/api-response";
 import { ToastService } from "@app/services/toast.service";
+import { verifyJwtWithJwk } from "@app/crypto/jwt";
 
 type Disclosure = [string, unknown] | [string, string, unknown];
 
@@ -94,9 +95,12 @@ export class Credential implements OnChanges {
 
           if (verificationMethod) {
             const jwk = verificationMethod?.["publicKeyJwk"];
-            const { payload, protectedHeader } = await jose.jwtVerify(
+            // SD-JWT signature verification against a DID-registry-resolved public key,
+            // dispatching to ML-DSA (mldsa.ts) or classical `jose` based on jwk.kty (see
+            // crypto/jwt.ts::verifyJwtWithJwk).
+            const { payload, protectedHeader } = await verifyJwtWithJwk(
               token[0],
-              jwk as CryptoKey,
+              jwk as any,
             );
             this.decodedHeader.set(protectedHeader as JwtPayload);
             this.decodedPayload.set(payload as JwtPayload);

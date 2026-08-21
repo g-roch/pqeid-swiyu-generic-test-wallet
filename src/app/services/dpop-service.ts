@@ -1,10 +1,10 @@
 import { Injectable } from "@angular/core";
 import { HttpClient, HttpHeaders, HttpParams } from "@angular/common/http";
-import { SignJWT } from "jose";
 
 import { firstValueFrom } from "rxjs";
 import { OAuthToken } from "src/generated/issuer/model/models";
 import { DpopKeyPair } from "./vc-key-store.service";
+import { signJwtWithHolderKey } from "@app/crypto/jwt";
 
 @Injectable({
   providedIn: "root",
@@ -40,13 +40,15 @@ export class DpopService {
 
     console.log("dpop jwt", dpopKeys.jwk);
 
-    return new SignJWT(payload)
-      .setProtectedHeader({
-        typ: "dpop+jwt",
-        alg: "ES256",
-        jwk: dpopKeys.jwk,
-      })
-      .sign(dpopKeys.privateKey);
+    // DPoP proof signature - `dpopKeys.alg` is ML-DSA-44 by default (see
+    // vc-key-store.service.ts::generateDpopKeyPair), matching DpopJwtValidator's
+    // SUPPORTED_ALGORITHMS in swiyu-generic-java-lib.
+    return signJwtWithHolderKey(
+      dpopKeys,
+      payload,
+      { typ: "dpop+jwt", jwk: dpopKeys.jwk },
+      { issuedAt: payload["iat"] as number },
+    );
   }
 
   async requestToken(
@@ -109,6 +111,10 @@ export class DpopService {
     });
   }
 
+  // TODO-PQEID: SHA-256 hash of the access token for the DPoP "ath" claim - a symmetric
+  // primitive (Grover-affected, not Shor-affected), so lower migration priority than the
+  // asymmetric sign/encrypt calls in this codebase; SHA-256 itself is not considered broken
+  // by a quantum adversary at this output size.
   private async createAth(accessToken: string): Promise<string> {
     const hash = await crypto.subtle.digest(
       "SHA-256",

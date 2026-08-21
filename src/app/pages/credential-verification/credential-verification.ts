@@ -5,7 +5,8 @@ import {
   signal,
   WritableSignal,
 } from "@angular/core";
-import { JWK, SignJWT } from "jose";
+import { HolderKeyPair } from "@app/crypto/holder-key";
+import { signJwtWithHolderKey } from "@app/crypto/jwt";
 import { FormsModule } from "@angular/forms";
 import { EMPTY, from, of, switchMap, tap, catchError } from "rxjs";
 import { ValidationPanelComponent } from "@components/validation-panel/validation-panel.component";
@@ -336,16 +337,13 @@ export class CredentialVerification implements OnInit {
 
           return from(
             Promise.all(
-              entry.state.verificationMethod.map(
-                (vm) =>
-                  this.cryptoService.getCryptoKeyFromJwk(
-                    vm.publicKeyJwk,
-                  ) as Promise<CryptoKey>,
+              entry.state.verificationMethod.map((vm) =>
+                this.cryptoService.getCryptoKeyFromJwk(vm.publicKeyJwk),
               ),
             ),
           );
         }),
-        switchMap((cryptoKeys: CryptoKey[]) => {
+        switchMap((cryptoKeys: (CryptoKey | Uint8Array)[]) => {
           const statements = [
             this.trustStatements()?.idTS!,
             this.trustStatements()?.ncTLS?.length
@@ -579,26 +577,21 @@ export class CredentialVerification implements OnInit {
     const sdHash = await this.calculateSdHash(selectiveDisclosureSdJwt);
     const holderKeyPair = this.findCredentialKeyPair(credentialString);
 
-    const kbJwt = await new SignJWT({
-      sd_hash: sdHash,
-      nonce,
-    })
-      .setProtectedHeader({
-        alg: "ES256",
-        typ: "kb+jwt",
-        jwk: holderKeyPair.jwk,
-      })
-      .setAudience(verifierId)
-      .setIssuedAt(new Date())
-      .sign(holderKeyPair.privateKey);
+    // Key-binding JWT signature for the SD-JWT presentation, signed with whatever algorithm
+    // `holderKeyPair` actually is (ML-DSA-44 by default - see vc-key-store.service.ts /
+    // holder-key.service.ts - matching the verifier's SdJwtVpTokenVerifier
+    // SUPPORTED_JWT_ALGORITHMS, see pqeid ML-DSA/DID resolver blocker memory).
+    const kbJwt = await signJwtWithHolderKey(
+      holderKeyPair,
+      { sd_hash: sdHash, nonce },
+      { typ: "kb+jwt", jwk: holderKeyPair.jwk },
+      { audience: verifierId, issuedAt: new Date() },
+    );
 
     return `${selectiveDisclosureSdJwt}${kbJwt}`;
   }
 
-  private findCredentialKeyPair(credentialString: string): {
-    privateKey: CryptoKey;
-    jwk: JWK;
-  } {
+  private findCredentialKeyPair(credentialString: string): HolderKeyPair {
     const storedVCs = this.vcStore.getAllVcs();
 
     for (const vc of storedVCs) {
@@ -608,16 +601,17 @@ export class CredentialVerification implements OnInit {
 
       const keyPair = this.vcKeyStore.getKeyPairByVcId(vc.vcId);
       if (keyPair) {
-        return keyPair;
+        return keyPair.keyPair;
       }
     }
 
-    return {
-      privateKey: this.holderKeyService.getPrivateKey(),
-      jwk: this.holderKeyService.getJwk(),
-    };
+    return this.holderKeyService.getKeyPair();
   }
 
+  // TODO-PQEID: SHA-256 hash of the presented SD-JWT for the "sd_hash" key-binding claim -
+  // symmetric primitive (Grover-affected, not Shor-affected), lower migration priority than
+  // the asymmetric sign call above; SHA-256 is not considered broken by a quantum adversary
+  // at this output size.
   private async calculateSdHash(sdJwtPresentation: string): Promise<string> {
     const data = new TextEncoder().encode(sdJwtPresentation);
     const hashBuffer = await crypto.subtle.digest("SHA-256", data);

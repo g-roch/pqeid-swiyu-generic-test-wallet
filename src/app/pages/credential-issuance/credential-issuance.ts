@@ -738,20 +738,29 @@ export class CredentialIssuance {
 
         const proofKeyPair = proofKeyPairs[i];
         if (proofKeyPair) {
+          // Reuse the exact key generated for this credential's issuance holder-binding
+          // proof (see wallet-service.ts::buildRequestCredential), since that's the key
+          // committed to the credential's `cnf` claim - a freshly generated key here
+          // wouldn't match at presentation time.
           await this.vcKeyStore.generateKeyPairForVc(
             vcId,
             credentialType,
             issuerId,
-            {
-              privateKey: proofKeyPair.privateKey,
-              jwk: proofKeyPair.jwk,
-            },
+            proofKeyPair.keyPair,
           );
         } else {
+          const proofAlg = (
+            this.credentialConfig()?.["proof_types_supported"] as
+              | Record<string, { proof_signing_alg_values_supported?: string[] }>
+              | undefined
+          )?.["jwt"]?.proof_signing_alg_values_supported?.[0];
+
           await this.vcKeyStore.generateKeyPairForVc(
             vcId,
             credentialType,
             issuerId,
+            undefined,
+            proofAlg,
           );
         }
 

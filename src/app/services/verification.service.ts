@@ -27,6 +27,9 @@ export class VerificationService {
       nonce,
     };
 
+    // TODO-PQEID: holder-binding proof signature, alg taken dynamically from the issuer's
+    // proof_signing_alg_values_supported (now "ML-DSA-44" after the issuer's PQC migration).
+    // Same "jose has no ML-DSA support" gap as credential.service.ts::createHolderBinding.
     const jwt = await new jose.SignJWT(claims)
       .setProtectedHeader({
         alg: proofSigningAlgValuesSupported,
@@ -64,6 +67,8 @@ export class VerificationService {
         ): meth is Record<string, unknown> => meth != null,
       )[0];
     const jwk = verificationMethod?.["publicKeyJwk"] as CryptoKey;
+    // TODO-PQEID: signature verification against a DID-registry-resolved key - same
+    // "jose has no ML-DSA support" gap as createHolderBinding above.
     const { payload, protectedHeader } = await jose.jwtVerify(jwt, jwk, {});
 
     return {
@@ -72,6 +77,8 @@ export class VerificationService {
     };
   }
 
+  // TODO-PQEID: generic key set generator, hardcoded to classical ECDSA P-256 - same
+  // WebCrypto/PQC gap as holder-key.service.ts and vc-key-store.service.ts.
   public async createKeySet(): Promise<{
     publicKey: CryptoKey;
     privateKey: CryptoKey;
@@ -119,6 +126,13 @@ export class VerificationService {
       },
     };
 
+    // TODO-PQEID: key-binding JWT signature for the verifiable presentation, alg hardcoded
+    // to "ES256" - unlike createHolderBinding above, this one isn't even wired to the
+    // dynamic proof-signing algorithm, so it's doubly stale against the holder's own
+    // ECDSA-only key generation and the wider ML-DSA migration. Note: this method does not
+    // appear to be called anywhere in src/ (createAndSignPresentation in
+    // credential-verification.ts duplicates this logic inline instead) - dead code, kept
+    // annotated for completeness.
     const vpToken = await new jose.SignJWT(claims)
       .setProtectedHeader({ alg: "ES256", typ: "kb+jwt", jwk: jwk })
       .setIssuedAt(Math.floor(Date.now() / 1000))
