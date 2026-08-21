@@ -40,7 +40,10 @@ import {
   TrustStatement,
   TrustVerificationResult,
 } from "@app/models/trust-statement-verifier.model";
-import { TrustService } from "@app/services/trust-service";
+import {
+  TrustService,
+  VerificationTrustStatementsResult,
+} from "@app/services/trust-service";
 import { WalletService } from "@app/services/wallet-service";
 import { OIDVCIService } from "@app/services/oidvci-service";
 import { DidResponse } from "@app/models/did-response";
@@ -293,9 +296,24 @@ export class CredentialVerification implements OnInit {
           return EMPTY;
         }),
         switchMap(() =>
-          this.trustService.getVerificationTrustStatements(
-            this.requestObject()?.parsed?.client_id as string,
-          ),
+          this.trustService
+            .getVerificationTrustStatements(
+              this.requestObject()?.parsed?.client_id as string,
+            )
+            .pipe(
+              // Trust statement lookup hits a real external trust registry (not part of
+              // this project's local infra) - unreachable here is expected, and must not
+              // abort the rest of the presentation flow (matches the issuance flow's
+              // leniency towards this same class of check).
+              catchError((error) => {
+                console.warn("Failed to fetch verification trust statements", error);
+                return of({
+                  pvaTLS: null,
+                  vqPS: null,
+                  ncTLS: null,
+                } as VerificationTrustStatementsResult);
+              }),
+            ),
         ),
         tap((response) => {
           console.log("Trust statements response", response);
