@@ -47,7 +47,10 @@ import {
 } from "@app/services/vc-key-store.service";
 import { detectIssuerDpopAlg } from "@app/crypto/holder-key";
 import { VcStoreService } from "@app/services/vc-store.service";
-import { TrustService } from "@app/services/trust-service";
+import {
+  IssuanceTrustStatementsResult,
+  TrustService,
+} from "@app/services/trust-service";
 import {
   TrustMarkers,
   TrustStatement,
@@ -553,9 +556,24 @@ export class CredentialIssuance {
         tap((cryptoKeys: CryptoKey[] | undefined) => {
           this.registryPublicKeys.set(cryptoKeys);
         }),
-        switchMap(() => {
-          return this.trustService.getIssuanceTrustStatements();
-        }),
+        switchMap(() =>
+          this.trustService.getIssuanceTrustStatements().pipe(
+            // Trust statement lookup hits a real external trust registry (not part of
+            // this project's local infra) and had no catchError of its own - a failure
+            // here (unreachable/CORS-blocked in a local test setup) was propagating up
+            // and silently aborting the rest of this pipe (decodeJwt, status-list check)
+            // before it could ever run. Same fix as credential-verification.ts's
+            // getVerificationTrustStatements() call (see "Isolate verification
+            // trust-statement fetch failures from the presentation pipe").
+            catchError((error) => {
+              console.warn("Failed to fetch issuance trust statements", error);
+              return of({
+                ncTLS: null,
+                piTLS: null,
+              } as IssuanceTrustStatementsResult);
+            }),
+          ),
+        ),
         tap((response) => {
           this.trustStatements.update((current) => ({
             ...current,
