@@ -46,3 +46,37 @@ export async function generateHolderKeyPair(alg: string): Promise<HolderKeyPair>
 
   return { kind: "jose", alg, privateKey, publicKey, jwk: { ...jwk, alg } };
 }
+
+/**
+ * PQEID: best-effort detection of whether an issuer is PQC- or classical-crypto-based, from
+ * its OID4VCI metadata - used to pick the DPoP proof algorithm. Unlike the credential
+ * proof/response-encryption algorithms, DPoP has no per-request negotiation field of its
+ * own (swiyu-generic-java-lib's DpopJwtValidator accepts one deployment-wide algorithm), so
+ * it can only be inferred from other advertised algorithms, not read off directly. Checks
+ * each credential configuration's proof_signing_alg_values_supported first (the same signal
+ * already used for the holder-binding proof itself), then falls back to
+ * credential_response_encryption's alg_values_supported ("XWING" implies a PQC issuer).
+ * Defaults to "ES256" (classical) when nothing indicates otherwise, so a wallet built
+ * against this issuer talks classical DPoP unless the issuer positively advertises PQC.
+ */
+export function detectIssuerDpopAlg(issuerMetadata?: {
+  credential_configurations_supported?: Record<string, unknown>;
+  credential_response_encryption?: { alg_values_supported?: string[] };
+}): string {
+  const configs = Object.values(issuerMetadata?.credential_configurations_supported ?? {});
+  for (const config of configs) {
+    const proofTypes = (config as Record<string, unknown>)?.["proof_types_supported"] as
+      | Record<string, { proof_signing_alg_values_supported?: string[] }>
+      | undefined;
+    const mldsaAlg = proofTypes?.["jwt"]?.proof_signing_alg_values_supported?.find(isMLDSAAlg);
+    if (mldsaAlg) {
+      return mldsaAlg;
+    }
+  }
+
+  if (issuerMetadata?.credential_response_encryption?.alg_values_supported?.includes("XWING")) {
+    return "ML-DSA-44";
+  }
+
+  return "ES256";
+}

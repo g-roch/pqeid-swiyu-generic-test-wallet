@@ -1,9 +1,10 @@
 import { HttpClient, HttpHeaders, HttpParams } from "@angular/common/http";
 import { inject, Injectable } from "@angular/core";
-import { from, map, Observable, of, switchMap } from "rxjs";
+import { from, map, Observable, of, switchMap, tap } from "rxjs";
 import { VpTokenMap } from "@app/models/api-response";
 import { RequestObject } from "src/generated/verifier";
 import { encryptJwe } from "@app/crypto/jwe";
+import { logMessageSize } from "./message-size-logger";
 
 @Injectable({
   providedIn: "root",
@@ -17,6 +18,14 @@ export class OIDVPService {
     }
 
     return this.http.get(requestObjectUrl, { responseType: "text" }).pipe(
+      tap((response: string) =>
+        logMessageSize(
+          "Vérification",
+          "Request Object (réponse)",
+          "JWT signé complet (dcql_query, nonce, client_metadata incl.)",
+          response,
+        ),
+      ),
       map((response: string) => {
         try {
           return JSON.parse(response) as RequestObject;
@@ -71,12 +80,27 @@ export class OIDVPService {
 
     if (requestObject.response_mode === "direct_post.jwt") {
       return from(this.encryptVerifierPayload(requestObject, vpTokenJson)).pipe(
+        tap((encryptedPayload: string) =>
+          logMessageSize(
+            "Vérification",
+            "Réponse de présentation envoyée (\"response\")",
+            "JWE compact (VP token + key-binding JWT chiffrés pour le verifier)",
+            encryptedPayload,
+          ),
+        ),
         map((encryptedPayload: string) => ({
           body: withState(new HttpParams().set("response", encryptedPayload)),
           headers,
         }))
       );
     }
+
+    logMessageSize(
+      "Vérification",
+      "Réponse de présentation envoyée (\"vp_token\")",
+      "VP token en clair (non chiffré - response_mode != direct_post.jwt)",
+      vpTokenJson,
+    );
 
     return of({
       body: withState(new HttpParams().set("vp_token", vpTokenJson)),

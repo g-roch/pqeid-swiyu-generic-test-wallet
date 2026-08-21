@@ -18,13 +18,15 @@ export class VcKeyStoreService {
   private vcKeyPair = new Map<string, VcKeyPair>();
 
   /**
-   * DPoP proof key pair. Defaults to ML-DSA-44 since swiyu-generic-java-lib's
-   * DpopJwtValidator.SUPPORTED_ALGORITHMS now only accepts "ML-DSA-44" (see
-   * DpopConstants.java) - a classical key here would be rejected by the authorization
-   * server's DPoP validation regardless of what dpop-service.ts signs with.
+   * DPoP proof key pair. `alg` must match what the target authorization server's DPoP
+   * validator actually accepts - a PQC-migrated backend
+   * (swiyu-generic-java-lib's DpopJwtValidator.SUPPORTED_ALGORITHMS) only accepts
+   * "ML-DSA-44", a classical one only ES256/similar. There's no per-request negotiation
+   * for DPoP itself, so callers derive `alg` from other issuer metadata via
+   * holder-key.ts::detectIssuerDpopAlg().
    */
-  async generateDpopKeyPair(): Promise<DpopKeyPair> {
-    return generateHolderKeyPair('ML-DSA-44');
+  async generateDpopKeyPair(alg: string): Promise<DpopKeyPair> {
+    return generateHolderKeyPair(alg);
   }
 
   async generateKeyPairForVc(

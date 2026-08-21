@@ -333,7 +333,7 @@ export class CredentialVerification implements OnInit {
           const did = this.requestObject()?.parsed?.iss! as string;
           const parts = did.split(":");
           const registryEntry = `https://${decodeURIComponent(did.substring(did.indexOf(parts[3]), did.length).replace(/:/g, "/"))}/did.jsonl`;
-          return this.oidvciService.fetchRegistryEntry(registryEntry);
+          return this.oidvciService.fetchRegistryEntry(registryEntry, "Vérification");
         }),
         tap((entry: RegistryEntry[]) => {
           this.registry.update((current) => ({

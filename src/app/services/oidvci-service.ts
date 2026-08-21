@@ -5,13 +5,14 @@ import {
   OpenIdMetadataResponse,
   RegistryEntry,
 } from "@app/models/api-response";
-import { Observable, from, of, switchMap } from "rxjs";
+import { Observable, from, of, switchMap, tap } from "rxjs";
 import { CredentialEndpointResponse } from "src/generated/issuer";
 import { NonceResponse } from "src/generated/issuer/model/nonceResponse";
 import { OAuthToken } from "src/generated/issuer/model/oAuthToken";
 import { DpopService } from "./dpop-service";
 import { DpopKeyPair } from "./vc-key-store.service";
 import { DidResponse } from "@app/models/did-response";
+import { logMessageSize } from "./message-size-logger";
 
 @Injectable({
   providedIn: "root",
@@ -113,6 +114,12 @@ export class OIDVCIService {
 
         if (dpopKeys && dpopProof) {
           headersObj["DPoP"] = dpopProof as string;
+          logMessageSize(
+            "Émission",
+            "Preuve DPoP (requête de jeton)",
+            "JWT complet - header + payload + signature",
+            dpopProof,
+          );
         }
 
         const headers = new HttpHeaders(headersObj);
@@ -122,6 +129,14 @@ export class OIDVCIService {
           responseType: "json",
         });
       }),
+      tap((token: OAuthToken) =>
+        logMessageSize(
+          "Émission",
+          "Jeton d'accès (réponse)",
+          "corps JSON access_token + token_type + expires_in",
+          token,
+        ),
+      ),
     );
   }
 
@@ -153,6 +168,26 @@ export class OIDVCIService {
       "Content-Type": encrypted ? "application/jwt" : "application/json",
     };
 
+    logMessageSize(
+      "Émission",
+      "Requête /credential",
+      encrypted
+        ? "JWE compact (requête chiffrée pour credential_request_encryption)"
+        : "JSON avec la preuve de possession (holder-binding) intégrée",
+      payload,
+    );
+
+    const logResponse = tap((response: CredentialEndpointResponse | string) =>
+      logMessageSize(
+        "Émission",
+        "Credential émis (réponse)",
+        encrypted
+          ? "JWE compact (réponse chiffrée pour credential_response_encryption)"
+          : "SD-JWT VC (ou enveloppe JSON la contenant)",
+        response,
+      ),
+    );
+
     if (!!dpopKeys) {
       return nonce$.pipe(
         switchMap((resp: NonceResponse) =>
@@ -168,23 +203,42 @@ export class OIDVCIService {
         ),
         switchMap((dpopProof) => {
           console.log("DPoP Proof created:", dpopProof);
+          logMessageSize(
+            "Émission",
+            "Preuve DPoP (requête credential)",
+            "JWT complet - header + payload + signature",
+            dpopProof,
+          );
           return this.http.post<any | string>(credentialEndpointUrl, payload, {
             headers: { ...headers, DPoP: dpopProof as string },
             responseType: encrypted ? ("text" as any) : "json",
           });
         }),
+        logResponse,
       );
     }
 
-    return this.http.post<any | string>(credentialEndpointUrl, payload, {
-      headers,
-      responseType: encrypted ? ("text" as any) : "json",
-    });
+    return this.http
+      .post<any | string>(credentialEndpointUrl, payload, {
+        headers,
+        responseType: encrypted ? ("text" as any) : "json",
+      })
+      .pipe(logResponse);
   }
 
   public fetchRegistryEntry(
     registryEntryUrl: string,
+    step: "Émission" | "Vérification" = "Émission",
   ): Observable<RegistryEntry[] | DidResponse> {
-    return this.http.get<RegistryEntry[] | DidResponse>(registryEntryUrl);
+    return this.http.get<RegistryEntry[] | DidResponse>(registryEntryUrl).pipe(
+      tap((entry) =>
+        logMessageSize(
+          step,
+          "Document DID résolu",
+          "corps JSONL complet renvoyé par le registre d'identifiants (verificationMethod incl.)",
+          entry,
+        ),
+      ),
+    );
   }
 }

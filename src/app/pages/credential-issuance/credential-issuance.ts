@@ -45,6 +45,7 @@ import {
   DpopKeyPair,
   VcKeyStoreService,
 } from "@app/services/vc-key-store.service";
+import { detectIssuerDpopAlg } from "@app/crypto/holder-key";
 import { VcStoreService } from "@app/services/vc-store.service";
 import { TrustService } from "@app/services/trust-service";
 import {
@@ -393,7 +394,11 @@ export class CredentialIssuance {
         }),
         switchMap(() =>
           this.walletService.getOptions().useDPoP
-            ? from(this.vcKeyStore.generateDpopKeyPair())
+            ? from(
+                this.vcKeyStore.generateDpopKeyPair(
+                  detectIssuerDpopAlg(this.issuerMetadata()),
+                ),
+              )
             : of(undefined),
         ),
         tap((dpopKeys: DpopKeyPair | undefined) => {
@@ -521,7 +526,7 @@ export class CredentialIssuance {
             throw new Error("Credential is missing");
           }
           const registryEntry = this.walletService.buildRegistryUrl(credential);
-          return this.oidvciService.fetchRegistryEntry(registryEntry);
+          return this.oidvciService.fetchRegistryEntry(registryEntry, "Émission");
         }),
         tap((registryEntry) => {
           this.registryEntry.set(registryEntry);
@@ -715,7 +720,9 @@ export class CredentialIssuance {
   }
 
   private async storeDpopKeys(): Promise<void> {
-    const keys = await this.vcKeyStore.generateDpopKeyPair();
+    const keys = await this.vcKeyStore.generateDpopKeyPair(
+      detectIssuerDpopAlg(this.issuerMetadata()),
+    );
     this.dpopKeys.set(keys);
   }
 
