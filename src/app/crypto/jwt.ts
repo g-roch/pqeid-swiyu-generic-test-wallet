@@ -6,9 +6,10 @@
  * previously handle a real "ML-DSA-44" alg or an "AKP" JWK from the migrated issuer/verifier.
  */
 
-import { JWK, jwtVerify, SignJWT } from "jose";
+import { JWK, jwtVerify, SignJWT, decodeProtectedHeader } from "jose";
 import { AKPJwk, importMLDSAPublicKey, MLDSASignJWT, verifyMLDSAJwt } from "./mldsa";
 import { HolderKeyPair } from "./holder-key";
+import { environment } from "../../environments/environment";
 
 export interface JwtSigningOptions {
   audience?: string;
@@ -50,12 +51,24 @@ export async function signJwtWithHolderKey(
 export async function verifyJwtWithJwk(
   jwt: string,
   jwk: JWK | AKPJwk,
+  accepted: readonly string[] = environment.acceptedSignatureAlgorithms,
 ): Promise<{ payload: Record<string, unknown>; protectedHeader: Record<string, unknown> }> {
-  if ((jwk as AKPJwk).kty === "AKP") {
-    const { publicKey } = importMLDSAPublicKey(jwk as AKPJwk);
-    return verifyMLDSAJwt(jwt, publicKey);
+  // PQEID step 5: algorithm policy first (RFC 8725 §3.1); a refused alg never reaches any crypto code
+  const headerAlg = decodeProtectedHeader(jwt).alg;
+  if (!headerAlg || !accepted.includes(headerAlg)) {
+    throw new Error(`JWS algorithm ${headerAlg} is not accepted (accepted: ${accepted.join(", ")})`);
   }
 
-  const { payload, protectedHeader } = await jwtVerify(jwt, jwk as JWK);
+  if ((jwk as AKPJwk).kty === "AKP") {
+    const { alg, publicKey } = importMLDSAPublicKey(jwk as AKPJwk);
+    if (!alg) {
+      throw new Error('AKP JWK without "alg": the algorithm must come from the key, not from the token');
+    }
+    // PQEID: the token's header alg must equal the key's alg (RFC 8725 §3.1), so the token
+    // can't choose the algorithm
+    return verifyMLDSAJwt(jwt, publicKey, alg);
+     }
+
+  const { payload, protectedHeader } = await jwtVerify(jwt, jwk as JWK, { algorithms: [...accepted] });
   return { payload, protectedHeader };
 }

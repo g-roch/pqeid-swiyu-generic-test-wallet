@@ -16,7 +16,7 @@ import {
 import { WalletOptions } from "@app/models/wallet-options";
 import { VCRecord } from "@app/models/vc-record";
 import { VcKeyStoreService } from "./vc-key-store.service";
-import { generateHolderKeyPair, HolderKeyPair } from "@app/crypto/holder-key";
+import { generateHolderKeyPair, HolderKeyPair, preferredAlg } from "@app/crypto/holder-key";
 import { signJwtWithHolderKey, verifyJwtWithJwk } from "@app/crypto/jwt";
 import { EphemeralKeyPair } from "@app/crypto/jwe";
 
@@ -281,9 +281,9 @@ export class WalletService {
       throw new Error("No format available");
     }
 
-    const proofAlg =
-      credentialConfiguration?.proof_types_supported?.["jwt"]
-        .proof_signing_alg_values_supported?.[0];
+    const proofAlg = preferredAlg(
+      credentialConfiguration?.proof_types_supported?.["jwt"].proof_signing_alg_values_supported,
+    );
 
     if (!proofAlg) {
       throw new Error("No proof signing algorithm available");

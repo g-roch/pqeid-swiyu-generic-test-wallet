@@ -89,7 +89,7 @@ export class OIDVPService {
           ),
         ),
         map((encryptedPayload: string) => ({
-          body: withState(new HttpParams().set("response", encryptedPayload)),
+          body: new HttpParams().set("response", encryptedPayload), // state is inside the JWE
           headers,
         }))
       );
@@ -139,7 +139,7 @@ export class OIDVPService {
     // verifier's PQC migration, see ManagementService.createEncryptionKeys in
     // swiyu-verifier) - dispatches to X-Wing (jwe.ts) or classical `jose` accordingly.
     return encryptJwe(
-      { vp_token: vpToken },
+      { vp_token: vpToken, ...(requestObject.state ? { state: requestObject.state } : {}) },
       encryptionKey as any,
       encryptionKey.alg,
       encryptionEnc,

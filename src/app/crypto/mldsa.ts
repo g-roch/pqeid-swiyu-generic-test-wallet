@@ -16,6 +16,7 @@
 
 import { ml_dsa44, ml_dsa65, ml_dsa87 } from "@noble/post-quantum/ml-dsa.js";
 import type { Signer } from "@noble/post-quantum/utils.js";
+import { COMPOSITE_ALG, CompositeAlg, signComposite, verifyComposite } from "./composite";
 import {
   base64UrlDecode,
   base64UrlDecodeJson,
@@ -27,6 +28,9 @@ import {
 export type MLDSAAlg = "ML-DSA-44" | "ML-DSA-65" | "ML-DSA-87";
 
 const AKP_KEY_TYPE = "AKP";
+
+/** PQEID: every algorithm carried by an AKP JWK: plain ML-DSA or the composite ML-DSA-65-ES256. */
+export type AKPAlg = MLDSAAlg | CompositeAlg;
 
 function signerFor(alg: MLDSAAlg): Signer {
   switch (alg) {
@@ -42,7 +46,7 @@ function signerFor(alg: MLDSAAlg): Signer {
 }
 
 export interface MLDSAKeyPair {
-  alg: MLDSAAlg;
+  alg: AKPAlg;
   publicKey: Uint8Array;
   secretKey: Uint8Array;
 }
@@ -55,7 +59,7 @@ export function generateMLDSAKeyPair(alg: MLDSAAlg): MLDSAKeyPair {
 
 export interface AKPJwk {
   kty: "AKP";
-  alg: MLDSAAlg;
+  alg: AKPAlg;
   kid?: string;
   pub: string;
   priv?: string;
@@ -80,7 +84,7 @@ export function exportMLDSAPrivateJwk(pair: MLDSAKeyPair, kid?: string): AKPJwk 
 }
 
 /** Parses an AKP JWK's public key bytes (works for both public-only and private JWKs). */
-export function importMLDSAPublicKey(jwk: AKPJwk): { alg: MLDSAAlg; publicKey: Uint8Array } {
+export function importMLDSAPublicKey(jwk: AKPJwk): { alg: AKPAlg; publicKey: Uint8Array } {
   if (jwk.kty !== AKP_KEY_TYPE) {
     throw new Error(`Expected kty "${AKP_KEY_TYPE}", got "${jwk.kty}"`);
   }
@@ -105,18 +109,23 @@ export function importMLDSAPrivateKey(jwk: AKPJwk): MLDSAKeyPair {
   };
 }
 
-/** Signs raw bytes with an ML-DSA secret key. */
-export function signMLDSA(alg: MLDSAAlg, secretKey: Uint8Array, message: Uint8Array): Uint8Array {
+/** Signs raw bytes with an ML-DSA or composite secret key. */
+export function signMLDSA(alg: AKPAlg, secretKey: Uint8Array, message: Uint8Array): Uint8Array {
+  if (alg === COMPOSITE_ALG) {
+    return signComposite(secretKey, message);
+  }
   return signerFor(alg).sign(message, secretKey);
 }
 
-/** Verifies a raw ML-DSA signature. Returns false (not throw) on a bad signature. */
+/** Verifies a raw ML-DSA or composite signature. Returns false (not throw) on a bad signature. */
 export function verifyMLDSA(
-  alg: MLDSAAlg,
+  alg: AKPAlg, 
   publicKey: Uint8Array,
-  signature: Uint8Array,
-  message: Uint8Array,
-): boolean {
+   signature: Uint8Array,
+    message: Uint8Array): boolean {
+  if (alg === COMPOSITE_ALG) {
+    return verifyComposite(signature, message, publicKey);
+  }
   return signerFor(alg).verify(signature, message, publicKey);
 }
 
@@ -189,7 +198,7 @@ export class MLDSASignJWT {
    * key's own algorithm.
    */
   sign(secretKey: Uint8Array): string {
-    const alg = this.header["alg"] as MLDSAAlg | undefined;
+    const alg = this.header["alg"] as AKPAlg | undefined;
     if (!alg) {
       throw new Error('Protected header is missing "alg"');
     }
@@ -215,7 +224,7 @@ export interface MLDSAVerifyResult<T = Record<string, unknown>> {
 export function verifyMLDSAJwt<T = Record<string, unknown>>(
   jwt: string,
   publicKey: Uint8Array,
-  expectedAlg?: MLDSAAlg,
+  expectedAlg?: AKPAlg,
 ): MLDSAVerifyResult<T> {
   const parts = jwt.split(".");
   if (parts.length !== 3) {
@@ -223,7 +232,7 @@ export function verifyMLDSAJwt<T = Record<string, unknown>>(
   }
   const [headerB64, payloadB64, signatureB64] = parts;
   const protectedHeader = base64UrlDecodeJson<Record<string, unknown>>(headerB64);
-  const alg = protectedHeader["alg"] as MLDSAAlg;
+  const alg = protectedHeader["alg"] as AKPAlg;
 
   if (expectedAlg && alg !== expectedAlg) {
     throw new Error(`Unexpected alg: expected ${expectedAlg}, got ${alg}`);

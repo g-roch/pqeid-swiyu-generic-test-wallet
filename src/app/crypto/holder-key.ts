@@ -11,18 +11,48 @@
  */
 
 import { exportJWK, JWK } from "jose";
-import { AKPJwk, exportMLDSAPublicJwk, generateMLDSAKeyPair, MLDSAAlg, MLDSAKeyPair } from "./mldsa";
+import { AKPAlg, AKPJwk, exportMLDSAPublicJwk, generateMLDSAKeyPair, MLDSAAlg, MLDSAKeyPair } from "./mldsa";
+import { COMPOSITE_ALG, generateCompositeKeyPair } from "./composite";
+import { base64UrlEncode } from "./base64url";
 
 export function isMLDSAAlg(alg: string | undefined): alg is MLDSAAlg {
   return alg === "ML-DSA-44" || alg === "ML-DSA-65" || alg === "ML-DSA-87";
 }
 
+/** PQEID: algorithms carried by an AKP JWK: plain ML-DSA or the composite ML-DSA-65-ES256. */
+export function isAKPAlg(alg: string | undefined): alg is AKPAlg {
+  return isMLDSAAlg(alg) || alg === COMPOSITE_ALG;
+}
+
+/**
+ * PQEID: the wallet's choice among the algorithms an issuer/verifier advertises: hybrid first,
+ * then plain ML-DSA, else the first entry. Never an algorithm that isn't advertised (stays compatible),
+ * so the wallet switches to the composite by itself once the issuer advertises it (expand -> migrate).
+ */
+export function preferredAlg(advertised: string[] | undefined): string | undefined {
+  if (!advertised?.length) {
+    return undefined;
+  }
+  return advertised.find((a) => a === COMPOSITE_ALG) ?? advertised.find(isMLDSAAlg) ?? advertised[0];
+}
+
 export type HolderKeyPair =
   | { kind: "jose"; alg: string; privateKey: CryptoKey; publicKey: CryptoKey; jwk: JWK }
-  | { kind: "mldsa"; alg: MLDSAAlg; secretKey: Uint8Array; publicKey: Uint8Array; jwk: AKPJwk };
+  | { kind: "mldsa"; alg: AKPAlg; secretKey: Uint8Array; publicKey: Uint8Array; jwk: AKPJwk };
 
 /** Generates a holder key pair for `alg`: ML-DSA via mldsa.ts, anything else via WebCrypto ECDSA P-256. */
 export async function generateHolderKeyPair(alg: string): Promise<HolderKeyPair> {
+   if (alg === COMPOSITE_ALG) {
+    // kind "mldsa" = the AKP family (signJwtWithHolderKey / verifyJwtWithJwk dispatch the composite by alg)
+    const pair = generateCompositeKeyPair();
+    return {
+      kind: "mldsa",
+      alg,
+      secretKey: pair.secretKey,
+      publicKey: pair.publicKey,
+      jwk: { kty: "AKP", alg, pub: base64UrlEncode(pair.publicKey) }, // public only, never "priv"
+    };
+  }
   if (isMLDSAAlg(alg)) {
     const pair: MLDSAKeyPair = generateMLDSAKeyPair(alg);
     return {
@@ -68,9 +98,9 @@ export function detectIssuerDpopAlg(issuerMetadata?: {
     const proofTypes = (config as Record<string, unknown>)?.["proof_types_supported"] as
       | Record<string, { proof_signing_alg_values_supported?: string[] }>
       | undefined;
-    const mldsaAlg = proofTypes?.["jwt"]?.proof_signing_alg_values_supported?.find(isMLDSAAlg);
-    if (mldsaAlg) {
-      return mldsaAlg;
+    const akpAlg = preferredAlg(proofTypes?.["jwt"]?.proof_signing_alg_values_supported);
+    if (isAKPAlg(akpAlg)) {
+      return akpAlg;
     }
   }
 

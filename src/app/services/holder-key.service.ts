@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { JWK } from 'jose';
 import { AKPJwk } from '@app/crypto/mldsa';
 import { generateHolderKeyPair, HolderKeyPair } from '@app/crypto/holder-key';
+import { COMPOSITE_ALG } from '@app/crypto/composite';
 
 @Injectable({
   providedIn: 'root'
@@ -14,14 +15,10 @@ export class HolderKeyService {
   /**
    * Holder's long-lived fallback key pair, used by
    * credential-verification.ts::findCredentialKeyPair when no per-VC key was stored for the
-   * credential being presented. Defaults to ML-DSA-44 since that's the only key-binding
-   * algorithm the migrated verifier's SdJwtVpTokenVerifier now accepts (see pqeid ML-DSA/DID
-   * resolver blocker memory) - this fallback is generated once at app bootstrap (no issuer/
-   * verifier metadata known yet), so it can't follow a per-session dynamic alg the way the
-   * per-VC keys in vc-key-store.service.ts do.
+   * credential being presented. Defaults to the composite ML-DSA-65-ES256 (hybrid); the verifier's policy accepts it alongside ML-DSA-44 (expand phase).
    */
   async initializeKeys(): Promise<void> {
-    this.keyPair = await generateHolderKeyPair('ML-DSA-44');
+    this.keyPair = await generateHolderKeyPair(COMPOSITE_ALG);
     this.keyGeneratedAt = new Date();
 
     this.currentKeyId = `key_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
